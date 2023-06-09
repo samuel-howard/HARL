@@ -2,9 +2,9 @@
 import numpy as np
 import torch
 from harl.utils.trans_tools import _t2n
-from harl.runners.on_policy_base_runner import OnPolicyBaseRunner
+from harl.runners.on_policy_sr_base_runner import OnPolicySRBaseRunner
 
-class OnPolicyHASRRunner(OnPolicyBaseRunner):
+class OnPolicyHASRRunner(OnPolicySRBaseRunner):
     """Runner for on-policy HA sample reuse algorithms."""
 
     def train(self):
@@ -14,7 +14,7 @@ class OnPolicyHASRRunner(OnPolicyBaseRunner):
         # factor is used for considering updates made by previous agents
         factor = np.ones(
             (
-                self.algo_args['train']['episode_length'],
+                self.algo_args['train']['episode_length']*2,
                 self.algo_args['train']['n_rollout_threads'],
                 1,
             ),
@@ -112,7 +112,7 @@ class OnPolicyHASRRunner(OnPolicyBaseRunner):
                 getattr(torch, self.action_aggregation)(
                     torch.exp(new_actions_logprob - old_actions_logprob), dim=-1
                 ).reshape(
-                    self.algo_args['train']['episode_length'],
+                    self.algo_args['train']['episode_length']*2,
                     self.algo_args['train']['n_rollout_threads'],
                     1,
                 )

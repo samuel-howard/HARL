@@ -1,18 +1,21 @@
-"""On-policy buffer for critic that uses Environment-Provided (EP) state."""
+"""On-policy buffer for critic that uses Feature-Pruned (FP) state."""
 import torch
 import numpy as np
 from harl.utils.envs_tools import get_shape_from_obs_space
-from harl.utils.trans_tools import _flatten, _sa_cast
+from harl.utils.trans_tools import _flatten, _ma_cast
 
 
-class OnPolicySRCriticBufferEP:
-    """On-policy sample reuse buffer for critic that uses Environment-Provided (EP) state."""
+class OnPolicySRCriticBufferFP:
+    """On-policy buffer for critic that uses Feature-Pruned (FP) state.
+    When FP state is used, the critic takes different global state as input for different actors. Thus, OnPolicySRCriticBufferFP has an extra dimension for number of agents compared to OnPolicyCriticBufferEP.
+    """
 
-    def __init__(self, args, share_obs_space):
+    def __init__(self, args, share_obs_space, num_agents):
         """Initialize on-policy critic buffer.
         Args:
             args: (dict) arguments
             share_obs_space: (gym.Space or list) share observation space
+            num_agents: (int) number of agents
         """
         self.episode_length = args["episode_length"]
         self.n_rollout_threads = args["n_rollout_threads"]
@@ -23,23 +26,29 @@ class OnPolicySRCriticBufferEP:
         self.gae_lambda = args["gae_lambda"]
         self.use_gae = args["use_gae"]
         self.use_proper_time_limits = args["use_proper_time_limits"]
-        self.M = 2  # IMPLEMENT AS AN ARGUMENT LATER
 
         share_obs_shape = get_shape_from_obs_space(share_obs_space)
+
         if isinstance(share_obs_shape[-1], list):
             share_obs_shape = share_obs_shape[:1]
 
         # Buffer for share observations
         self.share_obs = np.zeros(
-            (self.M*self.episode_length + 1, self.n_rollout_threads, *share_obs_shape),
+            (
+                self.episode_length + 1,
+                self.n_rollout_threads,
+                num_agents,
+                *share_obs_shape,
+            ),
             dtype=np.float32,
         )
 
         # Buffer for rnn states of critic
         self.rnn_states_critic = np.zeros(
             (
-                self.M*self.episode_length + 1,
+                self.episode_length + 1,
                 self.n_rollout_threads,
+                num_agents,
                 self.recurrent_n,
                 self.rnn_hidden_size,
             ),
@@ -48,19 +57,24 @@ class OnPolicySRCriticBufferEP:
 
         # Buffer for value predictions made by this critic
         self.value_preds = np.zeros(
-            (self.M*self.episode_length + 1, self.n_rollout_threads, 1), dtype=np.float32
+            (self.episode_length + 1, self.n_rollout_threads, num_agents, 1),
+            dtype=np.float32,
         )
 
         # Buffer for returns calculated at each timestep
-        self.returns = np.zeros(
-            (self.M*self.episode_length + 1, self.n_rollout_threads, 1), dtype=np.float32
-        )
+        self.returns = np.zeros_like(self.value_preds)
 
         # Buffer for rewards received by agents at each timestep
-        self.rewards = np.zeros((self.M*self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
+        self.rewards = np.zeros(
+            (self.episode_length, self.n_rollout_threads, num_agents, 1),
+            dtype=np.float32,
+        )
 
         # Buffer for masks indicating whether an episode is done at each timestep
-        self.masks = np.ones((self.M*self.episode_length + 1, self.n_rollout_threads, 1), dtype=np.float32)
+        self.masks = np.ones(
+            (self.episode_length + 1, self.n_rollout_threads, num_agents, 1),
+            dtype=np.float32,
+        )
 
         # Buffer for bad masks indicating truncation and termination. If 0, trunction; if 1 and masks is 0, termination; else, not done yet.
         self.bad_masks = np.ones_like(self.masks)
@@ -69,12 +83,12 @@ class OnPolicySRCriticBufferEP:
 
     def insert(self, share_obs, rnn_states_critic, value_preds, rewards, masks, bad_masks):
         """Insert data into buffer."""
-        self.share_obs[-self.episode_length + self.step + 1] = share_obs.copy()
-        self.rnn_states_critic[-self.episode_length + self.step + 1] = rnn_states_critic.copy()
-        self.value_preds[-self.episode_length + self.step] = value_preds.copy()
-        self.rewards[-self.episode_length + self.step] = rewards.copy()
-        self.masks[-self.episode_length + self.step + 1] = masks.copy()
-        self.bad_masks[-self.episode_length + self.step + 1] = bad_masks.copy()
+        self.share_obs[self.step + 1] = share_obs.copy()
+        self.rnn_states_critic[self.step + 1] = rnn_states_critic.copy()
+        self.value_preds[self.step] = value_preds.copy()
+        self.rewards[self.step] = rewards.copy()
+        self.masks[self.step + 1] = masks.copy()
+        self.bad_masks[self.step + 1] = bad_masks.copy()
 
         self.step = (self.step + 1) % self.episode_length
 
@@ -85,15 +99,7 @@ class OnPolicySRCriticBufferEP:
         self.masks[0] = self.masks[-1].copy()
         self.bad_masks[0] = self.bad_masks[-1].copy()
 
-        self.share_obs[:(self.M-1)*self.episode_length + 1] = self.share_obs[-(self.M-1)*self.episode_length - 1].copy()
-        self.rnn_states_critic[:(self.M-1)*self.episode_length + 1] = self.rnn_states_critic[-(self.M-1)*self.episode_length - 1].copy()
-        self.value_preds[:(self.M-1)*self.episode_length] = self.value_preds[-(self.M-1)*self.episode_length].copy()
-        self.rewards[:(self.M-1)*self.episode_length] = self.rewards[-(self.M-1)*self.episode_length].copy()
-        self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1].copy()
-        self.bad_masks[:(self.M-1)*self.episode_length + 1] = self.bad_masks[-(self.M-1)*self.episode_length - 1].copy()
-
     def get_mean_rewards(self):
-        """Get mean rewards for logging."""
         return np.mean(self.rewards)
 
     def compute_returns(self, next_value, value_normalizer=None):
@@ -115,8 +121,8 @@ class OnPolicySRCriticBufferEP:
                             * self.masks[step + 1]
                             - value_normalizer.denormalize(self.value_preds[step])
                         )
-                        gae = delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae
-                        gae = self.bad_masks[step + 1] * gae
+                        gae = delta + self.gamma * self.gae_lambda * gae * self.masks[step + 1]
+                        gae = gae * self.bad_masks[step + 1]
                         self.returns[step] = gae + value_normalizer.denormalize(
                             self.value_preds[step]
                         )
@@ -127,7 +133,7 @@ class OnPolicySRCriticBufferEP:
                             - self.value_preds[step]
                         )
                         gae = delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae
-                        gae = self.bad_masks[step + 1] * gae
+                        gae = gae * self.bad_masks[step + 1]
                         self.returns[step] = gae + self.value_preds[step]
             else:  # do not use GAE
                 self.returns[-1] = next_value
@@ -191,12 +197,12 @@ class OnPolicySRCriticBufferEP:
         """
 
         # get episode_length, n_rollout_threads, mini_batch_size
-        episode_length, n_rollout_threads = self.rewards.shape[0:2]
-        batch_size = n_rollout_threads * episode_length
+        episode_length, n_rollout_threads, num_agents = self.rewards.shape[0:3]
+        batch_size = n_rollout_threads * episode_length * num_agents
         if mini_batch_size is None:
             assert batch_size >= critic_num_mini_batch, (
                 f"The number of processes ({n_rollout_threads}) "
-                f"* number of steps ({episode_length}) = {n_rollout_threads * episode_length} "
+                f"* number of steps ({episode_length}) * number of agents ({num_agents}) = {n_rollout_threads * episode_length * num_agents} "
                 f"is required to be greater than or equal to the number of critic mini batches ({critic_num_mini_batch})."
             )
             mini_batch_size = batch_size // critic_num_mini_batch
@@ -208,13 +214,13 @@ class OnPolicySRCriticBufferEP:
             for i in range(critic_num_mini_batch)
         ]
 
-        # Combine the first two dimensions (episode_length and n_rollout_threads) to form batch.
+        # Combine the first three dimensions (episode_length, n_rollout_threads, num_agents) to form batch.
         # Take share_obs shape as an example: 
-        # (episode_length + 1, n_rollout_threads, *share_obs_shape) --> (episode_length, n_rollout_threads, *share_obs_shape)
-        # --> (episode_length * n_rollout_threads, *share_obs_shape)
-        share_obs = self.share_obs[:-1].reshape(-1, *self.share_obs.shape[2:])
+        # (episode_length + 1, n_rollout_threads, num_agents, *share_obs_shape) --> (episode_length, n_rollout_threads, num_agents, *share_obs_shape)
+        # --> (episode_length * n_rollout_threads * num_agents, *share_obs_shape)
+        share_obs = self.share_obs[:-1].reshape(-1, *self.share_obs.shape[3:])
         rnn_states_critic = self.rnn_states_critic[:-1].reshape(
-            -1, *self.rnn_states_critic.shape[2:]
+            -1, *self.rnn_states_critic.shape[3:]
         )  # actually not used, just for consistency
         value_preds = self.value_preds[:-1].reshape(-1, 1)
         returns = self.returns[:-1].reshape(-1, 1)
@@ -222,7 +228,7 @@ class OnPolicySRCriticBufferEP:
 
         for indices in sampler:
             # share_obs shape: 
-            # (episode_length * n_rollout_threads, *share_obs_shape) --> (mini_batch_size, *share_obs_shape)
+            # (episode_length * n_rollout_threads * num_agents, *share_obs_shape) --> (mini_batch_size, *share_obs_shape)
             share_obs_batch = share_obs[indices]
             rnn_states_critic_batch = rnn_states_critic[indices]
             value_preds_batch = value_preds[indices]
@@ -240,19 +246,29 @@ class OnPolicySRCriticBufferEP:
         """
 
         # get n_rollout_threads and num_envs_per_batch
-        n_rollout_threads = self.rewards.shape[1]
-        assert n_rollout_threads >= critic_num_mini_batch, (
-            f"The number of processes ({n_rollout_threads}) "
-            f"has to be greater than or equal to the number of "
-            f"mini batches ({critic_num_mini_batch})."
+        _, n_rollout_threads, num_agents = self.rewards.shape[0:3]
+        batch_size = n_rollout_threads * num_agents
+        assert n_rollout_threads * num_agents >= critic_num_mini_batch, (
+            f"PPO requires the number of processes ({n_rollout_threads})* number of agents ({num_agents}) "
+            f"to be greater than or equal to the number of "
+            f"PPO mini batches ({critic_num_mini_batch})."
         )
-        num_envs_per_batch = n_rollout_threads // critic_num_mini_batch
+        num_envs_per_batch = batch_size // critic_num_mini_batch
 
         # shuffle indices
-        perm = torch.randperm(n_rollout_threads).numpy()
+        perm = torch.randperm(batch_size).numpy()
+
+        # Reshape the buffers from (episode_length, n_rollout_threads, num_agents, *dim) to (episode_length, n_rollout_threads * num_agents, *dim)
+        share_obs = self.share_obs.reshape(-1, batch_size, *self.share_obs.shape[3:])
+        rnn_states_critic = self.rnn_states_critic.reshape(
+            -1, batch_size, *self.rnn_states_critic.shape[3:]
+        )
+        value_preds = self.value_preds.reshape(-1, batch_size, 1)
+        returns = self.returns.reshape(-1, batch_size, 1)
+        masks = self.masks.reshape(-1, batch_size, 1)
 
         # prepare data for each mini batch
-        for start_ind in range(0, n_rollout_threads, num_envs_per_batch):
+        for start_ind in range(0, batch_size, num_envs_per_batch):
             share_obs_batch = []
             rnn_states_critic_batch = []
             value_preds_batch = []
@@ -261,11 +277,11 @@ class OnPolicySRCriticBufferEP:
             # put data from different environments into the same mini batch
             for offset in range(num_envs_per_batch):
                 ind = perm[start_ind + offset]
-                share_obs_batch.append(self.share_obs[:-1, ind])
-                rnn_states_critic_batch.append(self.rnn_states_critic[0:1, ind])  # only need the first state
-                value_preds_batch.append(self.value_preds[:-1, ind])
-                return_batch.append(self.returns[:-1, ind])
-                masks_batch.append(self.masks[:-1, ind])
+                share_obs_batch.append(share_obs[:-1, ind])
+                rnn_states_critic_batch.append(rnn_states_critic[0:1, ind])  # only need the first state
+                value_preds_batch.append(value_preds[:-1, ind])
+                return_batch.append(returns[:-1, ind])
+                masks_batch.append(masks[:-1, ind])
 
             T, N = self.episode_length, num_envs_per_batch
             # These are all ndarrays of shape (episode_length, num_envs_per_batch, *dim)
@@ -276,7 +292,7 @@ class OnPolicySRCriticBufferEP:
 
             # rnn_states_critic_batch is a (num_envs_per_batch, *dim) ndarray
             rnn_states_critic_batch = np.stack(rnn_states_critic_batch).reshape(
-                N, *self.rnn_states_critic.shape[2:]
+                N, *self.rnn_states_critic.shape[3:]
             )
 
             # Flatten the (episode_length, num_envs_per_batch, *dim) ndarrays to (episode_length * num_envs_per_batch, *dim)
@@ -296,9 +312,9 @@ class OnPolicySRCriticBufferEP:
             data_chunk_length: (int) Length of data chunks.
         """
 
-        # get episode_length, n_rollout_threads, and mini_batch_size
-        episode_length, n_rollout_threads = self.rewards.shape[0:2]
-        batch_size = n_rollout_threads * episode_length
+        # get episode_length, n_rollout_threads, num_agents, and mini_batch_size
+        episode_length, n_rollout_threads, num_agents = self.rewards.shape[0:3]
+        batch_size = n_rollout_threads * episode_length * num_agents
         data_chunks = batch_size // data_chunk_length
         mini_batch_size = data_chunks // critic_num_mini_batch
 
@@ -314,24 +330,26 @@ class OnPolicySRCriticBufferEP:
             for i in range(critic_num_mini_batch)
         ]
 
-        # The following data operations first transpose the first two dimensions of the data (episode_length, n_rollout_threads)
-        # to (n_rollout_threads, episode_length), then reshape the data to (n_rollout_threads * episode_length, *dim).
+        # The following data operations first transpose the first three dimensions of the data (episode_length, n_rollout_threads, num_agents)
+        # to (n_rollout_threads, num_agents, episode_length), then reshape the data to (n_rollout_threads * num_agents * episode_length, *dim).
         # Take share_obs shape as an example:
-        # (episode_length + 1, n_rollout_threads, *share_obs_shape) --> (episode_length, n_rollout_threads, *share_obs_shape)
-        # --> (n_rollout_threads, episode_length, *share_obs_shape) --> (n_rollout_threads * episode_length, *share_obs_shape)
-        if len(self.share_obs.shape) > 3:
+        # (episode_length + 1, n_rollout_threads, num_agents, *share_obs_shape) --> (episode_length, n_rollout_threads, num_agents, *share_obs_shape)
+        # --> (n_rollout_threads, num_agents, episode_length, *share_obs_shape) --> (n_rollout_threads * num_agents * episode_length, *share_obs_shape)
+        if len(self.share_obs.shape) > 4:
             share_obs = (
-                self.share_obs[:-1].transpose(1, 0, 2, 3, 4).reshape(-1, *self.share_obs.shape[2:])
+                self.share_obs[:-1]
+                .transpose(1, 2, 0, 3, 4, 5)
+                .reshape(-1, *self.share_obs.shape[3:])
             )
         else:
-            share_obs = _sa_cast(self.share_obs[:-1])
-        value_preds = _sa_cast(self.value_preds[:-1])
-        returns = _sa_cast(self.returns[:-1])
-        masks = _sa_cast(self.masks[:-1])
+            share_obs = _ma_cast(self.share_obs[:-1])
+        value_preds = _ma_cast(self.value_preds[:-1])
+        returns = _ma_cast(self.returns[:-1])
+        masks = _ma_cast(self.masks[:-1])
         rnn_states_critic = (
             self.rnn_states_critic[:-1]
-            .transpose(1, 0, 2, 3)
-            .reshape(-1, *self.rnn_states_critic.shape[2:])
+            .transpose(1, 2, 0, 3, 4)
+            .reshape(-1, *self.rnn_states_critic.shape[3:])
         )
 
         # generate mini-batches
@@ -349,7 +367,7 @@ class OnPolicySRCriticBufferEP:
                 return_batch.append(returns[ind : ind + data_chunk_length])
                 masks_batch.append(masks[ind : ind + data_chunk_length])
                 rnn_states_critic_batch.append(rnn_states_critic[ind])  # only the beginning rnn states are needed
-            
+
             L, N = data_chunk_length, mini_batch_size
             # These are all ndarrays of size (data_chunk_length, mini_batch_size, *dim)
             share_obs_batch = np.stack(share_obs_batch, axis=1)
@@ -358,7 +376,7 @@ class OnPolicySRCriticBufferEP:
             masks_batch = np.stack(masks_batch, axis=1)
             # rnn_states_critic_batch is a (mini_batch_size, *dim) ndarray
             rnn_states_critic_batch = np.stack(rnn_states_critic_batch).reshape(
-                N, *self.rnn_states_critic.shape[2:]
+                N, *self.rnn_states_critic.shape[3:]
             )
 
             # Flatten the (data_chunk_length, mini_batch_size, *dim) ndarrays to (data_chunk_length * mini_batch_size, *dim)
@@ -366,5 +384,5 @@ class OnPolicySRCriticBufferEP:
             value_preds_batch = _flatten(L, N, value_preds_batch)
             return_batch = _flatten(L, N, return_batch)
             masks_batch = _flatten(L, N, masks_batch)
-            
+
             yield share_obs_batch, rnn_states_critic_batch, value_preds_batch, return_batch, masks_batch

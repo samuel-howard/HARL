@@ -1,4 +1,4 @@
-"""HAPPO algorithm."""
+"""HAPPO_SR algorithm."""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -99,7 +99,7 @@ class HAPPO_SR(OnPolicyBase):
     def train(self, actor_buffer, advantages, state_type):
         """Perform a training update using minibatch GD.
         Args:
-            actor_buffer: (OnPolicyActorBuffer) buffer containing training data related to actor.
+            actor_buffer: (OnPolicySRActorBuffer) buffer containing training data related to actor.
             advantages: (np.ndarray) advantages.
             state_type: (str) type of state.
         Returns:

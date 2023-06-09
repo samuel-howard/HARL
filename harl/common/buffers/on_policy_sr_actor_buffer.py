@@ -21,6 +21,7 @@ class OnPolicySRActorBuffer:
         self.hidden_sizes = args["hidden_sizes"]
         self.rnn_hidden_size = self.hidden_sizes[-1]
         self.recurrent_n = args["recurrent_n"]
+        self.M = 2 # IMPLEMENT THIS AS AN ARGUMENT LATER
 
         obs_shape = get_shape_from_obs_space(obs_space)
 
@@ -29,14 +30,14 @@ class OnPolicySRActorBuffer:
 
         # Buffer for observations of this actor.
         self.obs = np.zeros(
-            (self.episode_length + 1, self.n_rollout_threads, *obs_shape),
+            (self.M*self.episode_length + 1, self.n_rollout_threads, *obs_shape),
             dtype=np.float32,
         )
 
         # Buffer for rnn states of this actor.
         self.rnn_states = np.zeros(
             (
-                self.episode_length + 1,
+                self.M*self.episode_length + 1,
                 self.n_rollout_threads,
                 self.recurrent_n,
                 self.rnn_hidden_size,
@@ -47,7 +48,7 @@ class OnPolicySRActorBuffer:
         # Buffer for available actions of this actor.
         if act_space.__class__.__name__ == "Discrete":
             self.available_actions = np.ones(
-                (self.episode_length + 1, self.n_rollout_threads, act_space.n),
+                (self.M*self.episode_length + 1, self.n_rollout_threads, act_space.n),
                 dtype=np.float32,
             )
         else:
@@ -57,16 +58,16 @@ class OnPolicySRActorBuffer:
 
         # Buffer for actions of this actor.
         self.actions = np.zeros(
-            (self.episode_length, self.n_rollout_threads, act_shape), dtype=np.float32
+            (self.M*self.episode_length, self.n_rollout_threads, act_shape), dtype=np.float32
         )
 
         # Buffer for action log probs of this actor.
         self.action_log_probs = np.zeros(
-            (self.episode_length, self.n_rollout_threads, act_shape), dtype=np.float32
+            (self.M*self.episode_length, self.n_rollout_threads, act_shape), dtype=np.float32
         )
 
         # Buffer for masks of this actor. Masks denotes at which point should the rnn states be reset.
-        self.masks = np.ones((self.episode_length + 1, self.n_rollout_threads, 1), dtype=np.float32)
+        self.masks = np.ones((self.M*self.episode_length + 1, self.n_rollout_threads, 1), dtype=np.float32)
 
         # Buffer for active masks of this actor. Active masks denotes whether the agent is alive.
         self.active_masks = np.ones_like(self.masks)
@@ -89,27 +90,29 @@ class OnPolicySRActorBuffer:
         active_masks=None,
         available_actions=None,
     ):
-        """Insert data into actor buffer."""
-        self.obs[self.step + 1] = obs.copy()
-        self.rnn_states[self.step + 1] = rnn_states.copy()
-        self.actions[self.step] = actions.copy()
-        self.action_log_probs[self.step] = action_log_probs.copy()
-        self.masks[self.step + 1] = masks.copy()
+        """Insert new data into actor buffer (near the end)."""
+        self.obs[-self.episode_length + self.step + 1] = obs.copy()
+        self.rnn_states[-self.episode_length + self.step + 1] = rnn_states.copy()
+        self.actions[-self.episode_length + self.step] = actions.copy()
+        self.action_log_probs[-self.episode_length + self.step] = action_log_probs.copy()
+        self.masks[-self.episode_length + self.step + 1] = masks.copy()
         if active_masks is not None:
-            self.active_masks[self.step + 1] = active_masks.copy()
+            self.active_masks[-self.episode_length + self.step + 1] = active_masks.copy()
         if available_actions is not None:
-            self.available_actions[self.step + 1] = available_actions.copy()
+            self.available_actions[-self.episode_length + self.step + 1] = available_actions.copy()
 
         self.step = (self.step + 1) % self.episode_length
 
     def after_update(self):
-        """After an update, copy the data at the last step to the first position of the buffer."""
-        self.obs[0] = self.obs[-1].copy()
-        self.rnn_states[0] = self.rnn_states[-1].copy()
-        self.masks[0] = self.masks[-1].copy()
-        self.active_masks[0] = self.active_masks[-1].copy()
+        """After an update, shift the data in the buffer 'left' by the episode length."""
+        self.obs[:(self.M-1)*self.episode_length + 1] = self.obs[-(self.M-1)*self.episode_length - 1].copy()
+        self.rnn_states[:(self.M-1)*self.episode_length + 1] = self.rnn_states[-(self.M-1)*self.episode_length - 1].copy()
+        self.actions[:(self.M-1)*self.episode_length] = self.actions[-(self.M-1)*self.episode_length].copy()
+        self.action_log_probs[:(self.M-1)*self.episode_length] = self.action_log_probs[-(self.M-1)*self.episode_length].copy()
+        self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1].copy()
+        self.active_masks[:(self.M-1)*self.episode_length + 1] = self.active_masks[-(self.M-1)*self.episode_length - 1].copy()
         if self.available_actions is not None:
-            self.available_actions[0] = self.available_actions[-1].copy()
+            self.available_actions[:(self.M-1)*self.episode_length + 1] = self.available_actions[-(self.M-1)*self.episode_length - 1].copy()
 
     def feed_forward_generator_actor(
         self, advantages, actor_num_mini_batch=None, mini_batch_size=None
@@ -117,12 +120,12 @@ class OnPolicySRActorBuffer:
         """Training data generator for actor that uses MLP network."""
 
         # get episode_length, n_rollout_threads, mini_batch_size
-        episode_length, n_rollout_threads = self.actions.shape[0:2]
-        batch_size = n_rollout_threads * episode_length
+        buffer_length, n_rollout_threads = self.actions.shape[0:2]
+        batch_size = n_rollout_threads * buffer_length
         if mini_batch_size is None:
             assert batch_size >= actor_num_mini_batch, (
                 f"The number of processes ({n_rollout_threads}) "
-                f"* the number of steps ({episode_length}) = {n_rollout_threads * episode_length}"
+                f"* the number of steps ({buffer_length}) = {n_rollout_threads * buffer_length}"
                 f" is required to be greater than or equal to the number of actor mini batches ({actor_num_mini_batch})."
             )
             mini_batch_size = batch_size // actor_num_mini_batch
@@ -155,7 +158,7 @@ class OnPolicySRActorBuffer:
         
         for indices in sampler:
             # obs shape: 
-            # (episode_length * n_rollout_threads, *obs_shape) --> (mini_batch_size, *obs_shape)
+            # (buffer_length * n_rollout_threads, *obs_shape) --> (mini_batch_size, *obs_shape)
             obs_batch = obs[indices]
             rnn_states_batch = rnn_states[indices]
             actions_batch = actions[indices]

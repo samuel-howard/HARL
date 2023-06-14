@@ -52,7 +52,18 @@ class HAPPO_SR(OnPolicyBase):
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
         factor_batch = check(factor_batch).to(**self.tpdv)
 
-        # Reshape to do evaluations for all steps in a single forward pass
+        with torch.no_grad():
+            # Obtain the pi_k log probs for the actions taken by the actor before the update
+            current_action_log_probs, _, _ = self.evaluate_actions(
+                obs_batch,
+                rnn_states_batch,
+                actions_batch,
+                masks_batch,
+                available_actions_batch,
+                active_masks_batch,
+            )
+
+        # Reshape to do evaluations for all steps in a single forward pass - THESE ARE THE ONES WITH THE GRADIENTS PROPAGATED
         action_log_probs, dist_entropy, _ = self.evaluate_actions(
             obs_batch,
             rnn_states_batch,
@@ -63,13 +74,21 @@ class HAPPO_SR(OnPolicyBase):
         )
 
         # actor update
-        imp_weights = getattr(torch, self.action_aggregation)(
-            torch.exp(action_log_probs - old_action_log_probs_batch),
+        k_i_imp_weights = getattr(torch, self.action_aggregation)(
+            torch.exp(current_action_log_probs - old_action_log_probs_batch),
             dim=-1,
             keepdim=True,
         )
-        surr1 = imp_weights * adv_targ
-        surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
+
+        opt_log_imp_weights = getattr(torch, self.action_aggregation)(
+            action_log_probs - old_action_log_probs_batch,
+            dim=-1,
+            keepdim=True,
+        )
+
+        surr1 = k_i_imp_weights * opt_log_imp_weights * adv_targ
+        init_clipped_values = k_i_imp_weights * torch.log(k_i_imp_weights)
+        surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, init_clipped_values - self.clip_param, init_clipped_values + self.clip_param) * adv_targ
 
         if self.use_policy_active_masks:
             policy_action_loss = (
@@ -93,6 +112,8 @@ class HAPPO_SR(OnPolicyBase):
             actor_grad_norm = get_grad_norm(self.actor.parameters())
 
         self.actor_optimizer.step()
+
+        imp_weights = torch.exp(opt_log_imp_weights)
 
         return policy_loss, dist_entropy, actor_grad_norm, imp_weights
 

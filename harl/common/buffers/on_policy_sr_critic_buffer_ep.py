@@ -23,7 +23,12 @@ class OnPolicySRCriticBufferEP:
         self.gae_lambda = args["gae_lambda"]
         self.use_gae = args["use_gae"]
         self.use_proper_time_limits = args["use_proper_time_limits"]
-        self.M = 2  # IMPLEMENT AS AN ARGUMENT LATER
+        self.M = args["M"]
+        self.clip_rho_threshold = args["clip_rho_threshold"]
+        self.clip_c_threshold = args["clip_c_threshold"]
+
+        self.clip_rho_threshold = None if self.clip_rho_threshold == 'None' else self.clip_rho_threshold
+        self.clip_c_threshold = None if self.clip_c_threshold == 'None' else self.clip_c_threshold
 
         share_obs_shape = get_shape_from_obs_space(share_obs_space)
         if isinstance(share_obs_shape[-1], list):
@@ -96,39 +101,54 @@ class OnPolicySRCriticBufferEP:
         """Get mean rewards for logging."""
         return np.mean(self.rewards)
 
-    def compute_returns(self, next_value, value_normalizer=None):
+    def compute_returns(self, next_value, log_rhos, value_normalizer=None):
         """Compute returns either as discounted sum of rewards, or using GAE.
         Args:
             next_value: (np.ndarray) value predictions for the step after the last episode step.
             value_normalizer: (PopArt) If not None, PopArt value normalizer instance.
         """
+
         if self.use_proper_time_limits:  # consider the difference between truncation and termination
             if self.use_gae:  # use GAE
+                ######################################## V-TRACE  ########################################
+                rhos = np.exp(log_rhos)
+                if self.clip_rho_threshold is not None:
+                    clipped_rhos = np.clip(rhos, a_min=None, a_max=self.clip_rho_threshold)
+                else:
+                    clipped_rhos = rhos
+
+                self.clipped_rhos = clipped_rhos
+
+                cs = np.clip(rhos, a_min=None, a_max=self.clip_c_threshold)
+
                 self.value_preds[-1] = next_value
-                gae = 0
+                acc = 0
                 for step in reversed(range(self.rewards.shape[0])):
                     if value_normalizer is not None:  # use PopArt
-                        delta = (
+                        delta = clipped_rhos[step] * (
                             self.rewards[step]
                             + self.gamma
                             * value_normalizer.denormalize(self.value_preds[step + 1])
                             * self.masks[step + 1]
                             - value_normalizer.denormalize(self.value_preds[step])
                         )
-                        gae = delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae
-                        gae = self.bad_masks[step + 1] * gae
-                        self.returns[step] = gae + value_normalizer.denormalize(
+                        acc = delta + self.gamma * cs[step] * self.masks[step + 1] * acc
+                        acc = self.bad_masks[step + 1] * acc
+                        self.returns[step] = acc + value_normalizer.denormalize(
                             self.value_preds[step]
                         )
                     else:  # do not use PopArt
-                        delta = (
+                        delta = clipped_rhos[step] * (
                             self.rewards[step]
                             + self.gamma * self.value_preds[step + 1] * self.masks[step + 1]
                             - self.value_preds[step]
                         )
-                        gae = delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae
-                        gae = self.bad_masks[step + 1] * gae
-                        self.returns[step] = gae + self.value_preds[step]
+                        acc = delta + self.gamma * cs[step] * self.masks[step + 1] * acc
+                        acc = self.bad_masks[step + 1] * acc
+                        self.returns[step] = acc + self.value_preds[step]
+
+            ##################################################################################################
+
             else:  # do not use GAE
                 self.returns[-1] = next_value
                 for step in reversed(range(self.rewards.shape[0])):

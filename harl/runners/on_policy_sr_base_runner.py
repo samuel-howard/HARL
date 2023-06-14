@@ -462,7 +462,45 @@ class OnPolicySRBaseRunner:
             next_value = np.array(
                 np.split(_t2n(next_value), self.algo_args['train']['n_rollout_threads'])
             )
-        self.critic_buffer.compute_returns(next_value, self.value_normalizer)
+
+        print(next_value.shape)
+
+        agent_log_rhos = []
+
+        for agent_id in range(len(self.actor)):
+            available_actions = (
+                None
+                if self.actor_buffer[agent_id].available_actions is None
+                else self.actor_buffer[agent_id]
+                .available_actions[:-1].reshape(-1, *self.actor_buffer[agent_id].available_actions.shape[2:])
+            )
+            agent_old_log_probs = self.actor_buffer[agent_id].action_log_probs
+            
+            agent_current_log_probs, _, _ = self.actor[agent_id].evaluate_actions(
+                self.actor_buffer[agent_id]
+                .obs[:-1]
+                .reshape(-1, *self.actor_buffer[agent_id].obs.shape[2:]),
+                self.actor_buffer[agent_id]
+                .rnn_states[0:1]
+                .reshape(-1, *self.actor_buffer[agent_id].rnn_states.shape[2:]),
+                self.actor_buffer[agent_id].actions.reshape(
+                    -1, *self.actor_buffer[agent_id].actions.shape[2:]
+                ),
+                self.actor_buffer[agent_id]
+                .masks[:-1]
+                .reshape(-1, *self.actor_buffer[agent_id].masks.shape[2:]),
+                available_actions,
+                self.actor_buffer[agent_id]
+                .active_masks[:-1]
+                .reshape(-1, *self.actor_buffer[agent_id].active_masks.shape[2:]),
+            )
+            agent_current_log_probs = _t2n(agent_current_log_probs)
+            agent_current_log_probs = agent_current_log_probs.reshape(agent_old_log_probs.shape)            # Possible source of bug!
+            # Now they have shapes (8000,1) and (400,20,1) respectively (current are all concatenated together, which we don't want
+            agent_log_rhos.append(agent_current_log_probs - agent_old_log_probs)
+            
+        log_rhos = np.array(agent_log_rhos).sum(axis=0)
+        self.critic_buffer.compute_returns(next_value, log_rhos, self.value_normalizer)               # Pass log_probs here
 
     def train(self):
         """Train the model."""

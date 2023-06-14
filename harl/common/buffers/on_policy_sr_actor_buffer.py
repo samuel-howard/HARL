@@ -21,7 +21,7 @@ class OnPolicySRActorBuffer:
         self.hidden_sizes = args["hidden_sizes"]
         self.rnn_hidden_size = self.hidden_sizes[-1]
         self.recurrent_n = args["recurrent_n"]
-        self.M = 2 # IMPLEMENT THIS AS AN ARGUMENT LATER
+        self.M = args["M"] # IMPLEMENT THIS AS AN ARGUMENT LATER
 
         obs_shape = get_shape_from_obs_space(obs_space)
 
@@ -113,6 +113,9 @@ class OnPolicySRActorBuffer:
         self.active_masks[:(self.M-1)*self.episode_length + 1] = self.active_masks[-(self.M-1)*self.episode_length - 1].copy()
         if self.available_actions is not None:
             self.available_actions[:(self.M-1)*self.episode_length + 1] = self.available_actions[-(self.M-1)*self.episode_length - 1].copy()
+
+    def compute_action_log_probs(self):
+        """Compute current log_probs for the actions in the buffer."""
 
     def feed_forward_generator_actor(
         self, advantages, actor_num_mini_batch=None, mini_batch_size=None

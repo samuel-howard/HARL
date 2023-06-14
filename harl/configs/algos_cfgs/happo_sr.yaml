@@ -27,7 +27,7 @@ train:
   # whether to use linear learning rate decay
   use_linear_lr_decay: False
   # whether to consider the case of truncation when an episode is done
-  use_proper_time_limits: True
+  use_proper_time_limits: False #True
   # if set, load models from this directory; otherwise, randomly initialise the models
   model_dir: ~
   # Number of previous iterations to keep in the buffer
@@ -87,7 +87,7 @@ algo:
   # whether to use clipped value loss
   use_clipped_value_loss: True
   # clip parameter
-  clip_param: 0.085       # This corresponds to around 0.2 for normal PPO
+  clip_param: 0.2 #0.085       # This corresponds to around 0.2 for normal PPO
   # number of mini-batches per epoch for actor update
   actor_num_mini_batch: 1
   # number of mini-batches per epoch for critic update
@@ -119,7 +119,7 @@ algo:
   # whether to use a fixed optimisation order
   fixed_order: False
   # clip parameters for V_trace
-  clip_rho_threshold: None
+  clip_rho_threshold: 1
   clip_c_threshold: 1
 logger:
   # logging directory

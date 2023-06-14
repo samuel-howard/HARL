@@ -43,6 +43,7 @@ class OnPolicySRBaseRunner:
         self.state_type = env_args.get("state_type", "EP")
         self.share_param = algo_args["algo"]['share_param']
         self.fixed_order = algo_args["algo"]['fixed_order']
+        self.episode_length = algo_args["train"]["episode_length"]
         set_seed(algo_args["seed"])
         self.device = init_device(algo_args["device"])
         if not self.algo_args['render']['use_render']:  # train, not render
@@ -266,15 +267,15 @@ class OnPolicySRBaseRunner:
         obs, share_obs, available_actions = self.envs.reset()
         # replay buffer
         for agent_id in range(self.num_agents):
-            self.actor_buffer[agent_id].obs[0] = obs[:, agent_id].copy()
+            self.actor_buffer[agent_id].obs[-self.episode_length - 1] = obs[:, agent_id].copy()
             if self.actor_buffer[agent_id].available_actions is not None:
                 self.actor_buffer[agent_id].available_actions[0] = available_actions[
                     :, agent_id
                 ].copy()
         if self.state_type == "EP":
-            self.critic_buffer.share_obs[0] = share_obs[:, 0].copy()
+            self.critic_buffer.share_obs[-self.episode_length - 1] = share_obs[:, 0].copy()
         elif self.state_type == "FP":
-            self.critic_buffer.share_obs[0] = share_obs.copy()
+            self.critic_buffer.share_obs[-self.episode_length - 1] = share_obs.copy()
 
     @torch.no_grad()
     def collect(self, step):
@@ -463,8 +464,6 @@ class OnPolicySRBaseRunner:
                 np.split(_t2n(next_value), self.algo_args['train']['n_rollout_threads'])
             )
 
-        print(next_value.shape)
-
         agent_log_rhos = []
 
         for agent_id in range(len(self.actor)):
@@ -501,6 +500,8 @@ class OnPolicySRBaseRunner:
             
         log_rhos = np.array(agent_log_rhos).sum(axis=0)
         self.critic_buffer.compute_returns(next_value, log_rhos, self.value_normalizer)               # Pass log_probs here
+
+
 
     def train(self):
         """Train the model."""

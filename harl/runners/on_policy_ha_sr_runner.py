@@ -43,14 +43,24 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
 
         # Change advantage calculation for MARL V-trace.
 
+
+        #if self.use_gae:
+        # if self.value_normalizer is not None:
+        #     advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
+        #         self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.value_normalizer.denormalize(
+        #         self.critic_buffer.value_preds[:-1]
+        #     ) )
+        # else:
+        #     advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
+        #         self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.critic_buffer.value_preds[:-1])
+
+        # compute advantages
         if self.value_normalizer is not None:
-            advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
-                self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.value_normalizer.denormalize(
+            advantages = self.critic_buffer.returns[:-1] - self.value_normalizer.denormalize(
                 self.critic_buffer.value_preds[:-1]
-            ) )
+            )
         else:
-            advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
-                self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.critic_buffer.value_preds[:-1])
+            advantages = self.critic_buffer.returns[:-1] - self.critic_buffer.value_preds[:-1]
 
         # normalize advantages for FP
         if self.state_type == "FP":
@@ -132,13 +142,14 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
 
             old_actions_logprob = self.actor_buffer[agent_id].action_log_probs.reshape(new_actions_logprob.shape)
             old_actions_logprob = torch.Tensor(old_actions_logprob).to(self.actor[agent_id].device)
+            # Have checked that this is the same as the above - though there seems to be some precision differences
 
             # update factor for next agent
             factor = factor * _t2n(
                 getattr(torch, self.action_aggregation)(
                     torch.exp(new_actions_logprob - old_actions_logprob), dim=-1
                 ).reshape(
-                    self.algo_args['train']['episode_length']*self.algo_args['train']['M'],            # FIX THIS - currently hard coded
+                    self.algo_args['train']['episode_length']*self.algo_args['train']['M'],
                     self.algo_args['train']['n_rollout_threads'],
                     1,
                 )

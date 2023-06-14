@@ -91,31 +91,30 @@ class OnPolicySRActorBuffer:
         available_actions=None,
     ):
         """Insert new data into actor buffer (near the end)."""
-        self.obs[-self.episode_length + self.step + 1] = obs.copy()
-        self.rnn_states[-self.episode_length + self.step + 1] = rnn_states.copy()
+        self.obs[-self.episode_length + self.step] = obs.copy()
+        self.rnn_states[-self.episode_length + self.step] = rnn_states.copy()
         self.actions[-self.episode_length + self.step] = actions.copy()
         self.action_log_probs[-self.episode_length + self.step] = action_log_probs.copy()
-        self.masks[-self.episode_length + self.step + 1] = masks.copy()
+        self.masks[-self.episode_length + self.step] = masks.copy()
         if active_masks is not None:
-            self.active_masks[-self.episode_length + self.step + 1] = active_masks.copy()
+            self.active_masks[-self.episode_length + self.step] = active_masks.copy()
         if available_actions is not None:
-            self.available_actions[-self.episode_length + self.step + 1] = available_actions.copy()
+            self.available_actions[-self.episode_length + self.step] = available_actions.copy()
 
         self.step = (self.step + 1) % self.episode_length
 
     def after_update(self):
         """After an update, shift the data in the buffer 'left' by the episode length."""
-        self.obs[:(self.M-1)*self.episode_length + 1] = self.obs[-(self.M-1)*self.episode_length - 1].copy()
-        self.rnn_states[:(self.M-1)*self.episode_length + 1] = self.rnn_states[-(self.M-1)*self.episode_length - 1].copy()
-        self.actions[:(self.M-1)*self.episode_length] = self.actions[-(self.M-1)*self.episode_length].copy()
-        self.action_log_probs[:(self.M-1)*self.episode_length] = self.action_log_probs[-(self.M-1)*self.episode_length].copy()
-        self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1].copy()
-        self.active_masks[:(self.M-1)*self.episode_length + 1] = self.active_masks[-(self.M-1)*self.episode_length - 1].copy()
+        self.obs[:(self.M-1)*self.episode_length + 1] = self.obs[-(self.M-1)*self.episode_length - 1:].copy()
+        self.rnn_states[:(self.M-1)*self.episode_length + 1] = self.rnn_states[-(self.M-1)*self.episode_length - 1:].copy()
+        if self.M != 1:
+            self.actions[:(self.M-1)*self.episode_length] = self.actions[-(self.M-1)*self.episode_length:].copy()
+            self.action_log_probs[:(self.M-1)*self.episode_length] = self.action_log_probs[-(self.M-1)*self.episode_length:].copy()
+        self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1:].copy()
+        self.active_masks[:(self.M-1)*self.episode_length + 1] = self.active_masks[-(self.M-1)*self.episode_length - 1:].copy()
         if self.available_actions is not None:
-            self.available_actions[:(self.M-1)*self.episode_length + 1] = self.available_actions[-(self.M-1)*self.episode_length - 1].copy()
+            self.available_actions[:(self.M-1)*self.episode_length + 1] = self.available_actions[-(self.M-1)*self.episode_length - 1:].copy()
 
-    def compute_action_log_probs(self):
-        """Compute current log_probs for the actions in the buffer."""
 
     def feed_forward_generator_actor(
         self, advantages, actor_num_mini_batch=None, mini_batch_size=None

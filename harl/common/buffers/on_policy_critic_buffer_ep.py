@@ -167,6 +167,7 @@ class OnPolicyCriticBufferEP:
                         )
                         gae = delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae
                         self.returns[step] = gae + self.value_preds[step]
+                        
             else:  # do not use GAE
                 self.returns[-1] = next_value
                 for step in reversed(range(self.rewards.shape[0])):

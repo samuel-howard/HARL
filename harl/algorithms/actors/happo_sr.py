@@ -52,6 +52,77 @@ class HAPPO_SR(OnPolicyBase):
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
         factor_batch = check(factor_batch).to(**self.tpdv)
 
+        # Reshape to do evaluations for all steps in a single forward pass
+        action_log_probs, dist_entropy, _ = self.evaluate_actions(
+            obs_batch,
+            rnn_states_batch,
+            actions_batch,
+            masks_batch,
+            available_actions_batch,
+            active_masks_batch,
+        )
+
+        # actor update
+        imp_weights = getattr(torch, self.action_aggregation)(
+            torch.exp(action_log_probs - old_action_log_probs_batch),
+            dim=-1,
+            keepdim=True,
+        )
+        surr1 = imp_weights * adv_targ
+        surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
+
+        if self.use_policy_active_masks:
+            policy_action_loss = (
+                -torch.sum(factor_batch * torch.min(surr1, surr2), dim=-1, keepdim=True)
+                * active_masks_batch
+            ).sum() / active_masks_batch.sum()
+        else:
+            policy_action_loss = -torch.sum(
+                factor_batch * torch.min(surr1, surr2), dim=-1, keepdim=True
+            ).mean()
+
+        policy_loss = policy_action_loss
+
+        self.actor_optimizer.zero_grad()
+
+        (policy_loss - dist_entropy * self.entropy_coef).backward()  # add entropy term
+
+        if self.use_max_grad_norm:
+            actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+        else:
+            actor_grad_norm = get_grad_norm(self.actor.parameters())
+
+        self.actor_optimizer.step()
+
+        return policy_loss, dist_entropy, actor_grad_norm, imp_weights
+    
+    def update_(self, sample):
+        """Update actor network.
+        Args:
+            sample: (Tuple) contains data batch with which to update networks.
+        Returns:
+            policy_loss: (torch.Tensor) actor(policy) loss value.
+            dist_entropy: (torch.Tensor) action entropies.
+            actor_grad_norm: (torch.Tensor) gradient norm from actor update.
+            imp_weights: (torch.Tensor) importance sampling weights.
+        """
+        (
+            obs_batch,
+            rnn_states_batch,
+            actions_batch,
+            masks_batch,
+            active_masks_batch,
+            old_action_log_probs_batch,
+            adv_targ,
+            available_actions_batch,
+            factor_batch,
+        ) = sample
+
+        old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
+        adv_targ = check(adv_targ).to(**self.tpdv)
+        active_masks_batch = check(active_masks_batch).to(**self.tpdv)
+        factor_batch = check(factor_batch).to(**self.tpdv)
+
         with torch.no_grad():
             # Obtain the pi_k log probs for the actions taken by the actor before the update
             current_action_log_probs, _, _ = self.evaluate_actions(

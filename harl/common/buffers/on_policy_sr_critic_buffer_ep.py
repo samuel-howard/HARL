@@ -74,28 +74,24 @@ class OnPolicySRCriticBufferEP:
 
     def insert(self, share_obs, rnn_states_critic, value_preds, rewards, masks, bad_masks):
         """Insert data into buffer."""
-        self.share_obs[-self.episode_length + self.step + 1] = share_obs.copy()
-        self.rnn_states_critic[-self.episode_length + self.step + 1] = rnn_states_critic.copy()
-        self.value_preds[-self.episode_length + self.step] = value_preds.copy()
+        self.share_obs[-self.episode_length + self.step] = share_obs.copy()
+        self.rnn_states_critic[-self.episode_length + self.step] = rnn_states_critic.copy()
+        self.value_preds[-self.episode_length + self.step - 1] = value_preds.copy()
         self.rewards[-self.episode_length + self.step] = rewards.copy()
-        self.masks[-self.episode_length + self.step + 1] = masks.copy()
-        self.bad_masks[-self.episode_length + self.step + 1] = bad_masks.copy()
+        self.masks[-self.episode_length + self.step] = masks.copy()
+        self.bad_masks[-self.episode_length + self.step] = bad_masks.copy()
 
         self.step = (self.step + 1) % self.episode_length
 
     def after_update(self):
         """After an update, copy the data at the last step to the first position of the buffer."""
-        self.share_obs[0] = self.share_obs[-1].copy()
-        self.rnn_states_critic[0] = self.rnn_states_critic[-1].copy()
-        self.masks[0] = self.masks[-1].copy()
-        self.bad_masks[0] = self.bad_masks[-1].copy()
-
-        self.share_obs[:(self.M-1)*self.episode_length + 1] = self.share_obs[-(self.M-1)*self.episode_length - 1].copy()
-        self.rnn_states_critic[:(self.M-1)*self.episode_length + 1] = self.rnn_states_critic[-(self.M-1)*self.episode_length - 1].copy()
-        self.value_preds[:(self.M-1)*self.episode_length] = self.value_preds[-(self.M-1)*self.episode_length].copy()
-        self.rewards[:(self.M-1)*self.episode_length] = self.rewards[-(self.M-1)*self.episode_length].copy()
-        self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1].copy()
-        self.bad_masks[:(self.M-1)*self.episode_length + 1] = self.bad_masks[-(self.M-1)*self.episode_length - 1].copy()
+        self.share_obs[:(self.M-1)*self.episode_length + 1] = self.share_obs[-(self.M-1)*self.episode_length - 1:].copy()
+        self.rnn_states_critic[:(self.M-1)*self.episode_length + 1] = self.rnn_states_critic[-(self.M-1)*self.episode_length - 1:].copy()
+        if self.M != 1:
+            self.value_preds[:(self.M-1)*self.episode_length] = self.value_preds[-(self.M-1)*self.episode_length:].copy()
+            self.rewards[:(self.M-1)*self.episode_length] = self.rewards[-(self.M-1)*self.episode_length:].copy()
+        self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1:].copy()
+        self.bad_masks[:(self.M-1)*self.episode_length + 1] = self.bad_masks[-(self.M-1)*self.episode_length - 1:].copy()
 
     def get_mean_rewards(self):
         """Get mean rewards for logging."""

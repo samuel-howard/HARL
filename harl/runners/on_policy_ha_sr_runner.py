@@ -142,7 +142,7 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
 
             old_actions_logprob = self.actor_buffer[agent_id].action_log_probs.reshape(new_actions_logprob.shape)
             old_actions_logprob = torch.Tensor(old_actions_logprob).to(self.actor[agent_id].device)
-            # Have checked that this is the same as the above - though there seems to be some precision differences
+            # Have checked that this is the same as the above - though there seems to be some precision differences (gpu related)
 
             # update factor for next agent
             factor = factor * _t2n(
@@ -154,6 +154,7 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
                     1,
                 )
             )
+            #print('factor', factor)
             actor_train_infos.append(actor_train_info)
 
         # update critic

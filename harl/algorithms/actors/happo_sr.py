@@ -25,7 +25,7 @@ class HAPPO_SR(OnPolicyBase):
         self.use_max_grad_norm = args["use_max_grad_norm"]
         self.max_grad_norm = args["max_grad_norm"]
 
-    def update(self, sample):
+    def update_old(self, sample):
         """Update actor network.
         Args:
             sample: (Tuple) contains data batch with which to update networks.
@@ -96,7 +96,7 @@ class HAPPO_SR(OnPolicyBase):
 
         return policy_loss, dist_entropy, actor_grad_norm, imp_weights
     
-    def update_(self, sample):
+    def update(self, sample):
         """Update actor network.
         Args:
             sample: (Tuple) contains data batch with which to update networks.
@@ -113,6 +113,7 @@ class HAPPO_SR(OnPolicyBase):
             masks_batch,
             active_masks_batch,
             old_action_log_probs_batch,
+            current_action_log_probs_batch,
             adv_targ,
             available_actions_batch,
             factor_batch,
@@ -123,16 +124,16 @@ class HAPPO_SR(OnPolicyBase):
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
         factor_batch = check(factor_batch).to(**self.tpdv)
 
-        with torch.no_grad():
-            # Obtain the pi_k log probs for the actions taken by the actor before the update
-            current_action_log_probs, _, _ = self.evaluate_actions(
-                obs_batch,
-                rnn_states_batch,
-                actions_batch,
-                masks_batch,
-                available_actions_batch,
-                active_masks_batch,
-            )
+        # with torch.no_grad():
+        #     # Obtain the pi_k log probs for the actions taken by the actor before the update
+        #     current_action_log_probs, _, _ = self.evaluate_actions(
+        #         obs_batch,
+        #         rnn_states_batch,
+        #         actions_batch,
+        #         masks_batch,
+        #         available_actions_batch,
+        #         active_masks_batch,
+        #     )
 
         # Reshape to do evaluations for all steps in a single forward pass - THESE ARE THE ONES WITH THE GRADIENTS PROPAGATED
         action_log_probs, dist_entropy, _ = self.evaluate_actions(
@@ -144,9 +145,12 @@ class HAPPO_SR(OnPolicyBase):
             active_masks_batch,
         )
 
+        # print('current_action_log_probs', current_action_log_probs_batch)
+        # print('old_action_log_probs_batch', old_action_log_probs_batch)
+
         # actor update
         k_i_imp_weights = getattr(torch, self.action_aggregation)(
-            torch.exp(current_action_log_probs - old_action_log_probs_batch),
+            torch.exp(current_action_log_probs_batch - old_action_log_probs_batch),
             dim=-1,
             keepdim=True,
         )
@@ -156,6 +160,9 @@ class HAPPO_SR(OnPolicyBase):
             dim=-1,
             keepdim=True,
         )
+
+        #print("k_i_imp_weights", k_i_imp_weights)
+        print("opt_log_imp_weights", opt_log_imp_weights)
 
         surr1 = k_i_imp_weights * opt_log_imp_weights * adv_targ
         init_clipped_values = k_i_imp_weights * torch.log(k_i_imp_weights)
@@ -188,7 +195,7 @@ class HAPPO_SR(OnPolicyBase):
 
         return policy_loss, dist_entropy, actor_grad_norm, imp_weights
 
-    def train(self, actor_buffer, advantages, state_type):
+    def train(self, actor_buffer, advantages, current_log_probs, state_type):
         """Perform a training update using minibatch GD.
         Args:
             actor_buffer: (OnPolicySRActorBuffer) buffer containing training data related to actor.
@@ -224,7 +231,7 @@ class HAPPO_SR(OnPolicyBase):
                 )
             else:
                 data_generator = actor_buffer.feed_forward_generator_actor(
-                    advantages, self.actor_num_mini_batch
+                    advantages, current_log_probs, self.actor_num_mini_batch
                 )
 
             for sample in data_generator:

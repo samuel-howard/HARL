@@ -117,7 +117,7 @@ class OnPolicySRActorBuffer:
 
 
     def feed_forward_generator_actor(
-        self, advantages, actor_num_mini_batch=None, mini_batch_size=None
+        self, advantages, current_log_probs, actor_num_mini_batch=None, mini_batch_size=None
     ):
         """Training data generator for actor that uses MLP network."""
 
@@ -156,7 +156,7 @@ class OnPolicySRActorBuffer:
         if self.factor is not None:
             factor = self.factor.reshape(-1, self.factor.shape[-1])
         advantages = advantages.reshape(-1, 1)
-
+        current_log_probs = current_log_probs.reshape(-1, 1)
         
         for indices in sampler:
             # obs shape: 
@@ -171,16 +171,18 @@ class OnPolicySRActorBuffer:
             masks_batch = masks[indices]
             active_masks_batch = active_masks[indices]
             old_action_log_probs_batch = action_log_probs[indices]
+            current_log_probs_batch = current_log_probs[indices]
+
             if advantages is None:
                 adv_targ = None
             else:
                 adv_targ = advantages[indices]
 
             if self.factor is None:
-                yield obs_batch, rnn_states_batch, actions_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ, available_actions_batch
+                yield obs_batch, rnn_states_batch, actions_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, current_log_probs_batch, adv_targ, available_actions_batch
             else:
                 factor_batch = factor[indices]
-                yield obs_batch, rnn_states_batch, actions_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ, available_actions_batch, factor_batch
+                yield obs_batch, rnn_states_batch, actions_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, current_log_probs_batch, adv_targ, available_actions_batch, factor_batch
 
     def naive_recurrent_generator_actor(self, advantages, actor_num_mini_batch):
         """Training data generator for actor that uses RNN network.

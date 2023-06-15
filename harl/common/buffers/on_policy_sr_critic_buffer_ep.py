@@ -108,16 +108,21 @@ class OnPolicySRCriticBufferEP:
             if self.use_gae:  # use GAE
                 ######################################## V-TRACE  ########################################
                 rhos = np.exp(log_rhos)
+                #print('rhos', rhos)
                 if self.clip_rho_threshold is not None:
                     clipped_rhos = np.clip(rhos, a_min=None, a_max=self.clip_rho_threshold)
                 else:
                     clipped_rhos = rhos
 
                 self.clipped_rhos = clipped_rhos
+                self.clipped_rhos = np.ones_like(clipped_rhos)
 
                 cs = np.clip(rhos, a_min=None, a_max=self.clip_c_threshold)
+                cs = np.ones_like(clipped_rhos)
+                
 
                 self.value_preds[-1] = next_value
+
                 acc = 0
                 for step in reversed(range(self.rewards.shape[0])):
                     if value_normalizer is not None:  # use PopArt

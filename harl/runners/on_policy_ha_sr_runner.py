@@ -44,23 +44,45 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
         # Change advantage calculation for MARL V-trace.
 
 
-        #if self.use_gae:
-        # if self.value_normalizer is not None:
-        #     advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
-        #         self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.value_normalizer.denormalize(
+
+
+        # This is to fix the advantage calculation, hopefully it doesn't affect things.
+        if self.value_normalizer is not None:
+            self.critic_buffer.returns[-1] = self.value_normalizer.denormalize(self.critic_buffer.value_preds[-1])*self.critic_buffer.masks[-1]
+        else:
+            self.critic_buffer.returns[-1] = self.critic_buffer.value_preds[-1]*self.critic_buffer.masks[-1]
+
+        # print('rewards', self.critic_buffer.rewards)
+        # print('returns', self.critic_buffer.returns)
+        # print('value_preds', self.value_normalizer.denormalize(self.critic_buffer.value_preds))
+        # print('value_preds', self.value_normalizer.denormalize(
         #         self.critic_buffer.value_preds[:-1]
         #     ) )
-        # else:
-        #     advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
-        #         self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.critic_buffer.value_preds[:-1])
+        # print('mask', self.critic_buffer.masks)
+
+
+        # print('test', self.critic_buffer.rewards + 
+        #         self.critic_buffer.gamma * self.critic_buffer.returns[1:])
+        if self.value_normalizer is not None:
+            advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
+                self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.value_normalizer.denormalize(
+                self.critic_buffer.value_preds[:-1]
+            ) )
+        else:
+            advantages = self.critic_buffer.clipped_rhos * (self.critic_buffer.rewards + 
+                self.critic_buffer.gamma * self.critic_buffer.returns[1:] - self.critic_buffer.value_preds[:-1])
+            
+        self.critic_buffer.returns[-1] = 0
 
         # compute advantages
-        if self.value_normalizer is not None:
-            advantages = self.critic_buffer.returns[:-1] - self.value_normalizer.denormalize(
-                self.critic_buffer.value_preds[:-1]
-            )
-        else:
-            advantages = self.critic_buffer.returns[:-1] - self.critic_buffer.value_preds[:-1]
+        # if self.value_normalizer is not None:
+        #     advantages = self.critic_buffer.returns[:-1] - self.value_normalizer.denormalize(
+        #         self.critic_buffer.value_preds[:-1]
+        #     )
+        # else:
+        #     advantages = self.critic_buffer.returns[:-1] - self.critic_buffer.value_preds[:-1]
+
+        # print('advantages', advantages)
 
         # normalize advantages for FP
         if self.state_type == "FP":
@@ -73,6 +95,41 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
             mean_advantages = np.nanmean(advantages_copy)
             std_advantages = np.nanstd(advantages_copy)
             advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
+
+
+        # Calculate current log_probs (for pi_k)
+        current_actions_logprob_agents = []
+        with torch.no_grad():
+            for agent_id in range(self.num_agents):
+                available_actions = (
+                    None
+                    if self.actor_buffer[agent_id].available_actions is None
+                    else self.actor_buffer[agent_id]
+                    .available_actions[:-1]
+                    .reshape(-1, *self.actor_buffer[agent_id].available_actions.shape[2:])
+                    )
+                
+                # Obtain the pi_k log probs for the actions taken by the actor before the update
+                current_actions_logprob, _, _ = self.actor[agent_id].evaluate_actions(
+                    self.actor_buffer[agent_id]
+                    .obs[:-1]
+                    .reshape(-1, *self.actor_buffer[agent_id].obs.shape[2:]),
+                    self.actor_buffer[agent_id]
+                    .rnn_states[0:1]
+                    .reshape(-1, *self.actor_buffer[agent_id].rnn_states.shape[2:]),
+                    self.actor_buffer[agent_id].actions.reshape(
+                        -1, *self.actor_buffer[agent_id].actions.shape[2:]
+                    ),
+                    self.actor_buffer[agent_id]
+                    .masks[:-1]
+                    .reshape(-1, *self.actor_buffer[agent_id].masks.shape[2:]),
+                    available_actions,
+                    self.actor_buffer[agent_id]
+                    .active_masks[:-1]
+                    .reshape(-1, *self.actor_buffer[agent_id].active_masks.shape[2:]),
+                )
+                current_actions_logprob_agents.append(current_actions_logprob)
+
 
         if self.fixed_order:
             agent_order = list(range(self.num_agents))
@@ -113,12 +170,12 @@ class OnPolicyHASRRunner(OnPolicySRBaseRunner):
             # update actor
             if self.state_type == "EP":
                 actor_train_info = self.actor[agent_id].train(
-                    self.actor_buffer[agent_id], advantages.copy(), "EP"
+                    self.actor_buffer[agent_id], advantages.copy(), current_actions_logprob_agents[agent_id], "EP"
                 )
             elif self.state_type == "FP":
                 actor_train_info = self.actor[agent_id].train(
-                    self.actor_buffer[agent_id], advantages[:, :, agent_id].copy(), "FP"
-                )
+                    self.actor_buffer[agent_id], advantages[:, :, agent_id].copy(), current_actions_logprob_agents[agent_id], "FP"
+                ) # Sort later
 
             # compute action log probs for updated agent
             new_actions_logprob, _, _ = self.actor[agent_id].evaluate_actions(

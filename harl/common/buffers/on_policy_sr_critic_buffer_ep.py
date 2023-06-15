@@ -115,10 +115,10 @@ class OnPolicySRCriticBufferEP:
                     clipped_rhos = rhos
 
                 self.clipped_rhos = clipped_rhos
-                self.clipped_rhos = np.ones_like(clipped_rhos)
+                # self.clipped_rhos = np.ones_like(clipped_rhos)
 
                 cs = np.clip(rhos, a_min=None, a_max=self.clip_c_threshold)
-                cs = np.ones_like(clipped_rhos)
+                # cs = np.ones_like(clipped_rhos)
                 
 
                 self.value_preds[-1] = next_value

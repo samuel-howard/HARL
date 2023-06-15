@@ -31,7 +31,7 @@ train:
   # if set, load models from this directory; otherwise, randomly initialise the models
   model_dir: ~
   # Number of previous iterations to keep in the buffer
-  M: 1
+  M: 2
 eval:
   # whether to use evaluation
   use_eval: True
@@ -87,7 +87,7 @@ algo:
   # whether to use clipped value loss
   use_clipped_value_loss: True
   # clip parameter
-  clip_param: 0.2
+  clip_param: 0.1
   # number of mini-batches per epoch for actor update
   actor_num_mini_batch: 1
   # number of mini-batches per epoch for critic update

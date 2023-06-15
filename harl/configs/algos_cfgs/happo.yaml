@@ -27,7 +27,7 @@ train:
   # whether to use linear learning rate decay
   use_linear_lr_decay: False
   # whether to consider the case of truncation when an episode is done
-  use_proper_time_limits: False #True
+  use_proper_time_limits: True
   # if set, load models from this directory; otherwise, randomly initialise the models
   model_dir: ~
 eval:

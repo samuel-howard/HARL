@@ -42,6 +42,7 @@ class HAPPO_SR(OnPolicyBase):
             masks_batch,
             active_masks_batch,
             old_action_log_probs_batch,
+            _,
             adv_targ,
             available_actions_batch,
             factor_batch,
@@ -161,12 +162,12 @@ class HAPPO_SR(OnPolicyBase):
             keepdim=True,
         )
 
-        #print("k_i_imp_weights", k_i_imp_weights)
-        print("opt_log_imp_weights", opt_log_imp_weights)
-
         surr1 = k_i_imp_weights * opt_log_imp_weights * adv_targ
         init_clipped_values = k_i_imp_weights * torch.log(k_i_imp_weights)
         surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, init_clipped_values - self.clip_param, init_clipped_values + self.clip_param) * adv_targ
+        # surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, init_clipped_values + np.log(0.8), init_clipped_values + np.log(1.2)) * adv_targ
+        # surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, np.log(0.8), np.log(1.2)) * adv_targ
+
 
         if self.use_policy_active_masks:
             policy_action_loss = (

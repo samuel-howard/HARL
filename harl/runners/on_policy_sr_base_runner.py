@@ -500,7 +500,7 @@ class OnPolicySRBaseRunner:
             
         log_rhos = np.array(agent_log_rhos).sum(axis=0)
         self.critic_buffer.compute_returns(next_value, log_rhos, self.value_normalizer)               # Pass log_probs here
-
+        # print("Computed returns", self.critic_buffer.returns)
 
     def train(self):
         """Train the model."""

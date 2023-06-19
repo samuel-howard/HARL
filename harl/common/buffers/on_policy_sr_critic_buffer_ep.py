@@ -87,8 +87,8 @@ class OnPolicySRCriticBufferEP:
         """After an update, copy the data at the last step to the first position of the buffer."""
         self.share_obs[:(self.M-1)*self.episode_length + 1] = self.share_obs[-(self.M-1)*self.episode_length - 1:].copy()
         self.rnn_states_critic[:(self.M-1)*self.episode_length + 1] = self.rnn_states_critic[-(self.M-1)*self.episode_length - 1:].copy()
+        self.value_preds[:(self.M-1)*self.episode_length+1] = self.value_preds[-(self.M-1)*self.episode_length-1:].copy()
         if self.M != 1:
-            self.value_preds[:(self.M-1)*self.episode_length] = self.value_preds[-(self.M-1)*self.episode_length:].copy()
             self.rewards[:(self.M-1)*self.episode_length] = self.rewards[-(self.M-1)*self.episode_length:].copy()
         self.masks[:(self.M-1)*self.episode_length + 1] = self.masks[-(self.M-1)*self.episode_length - 1:].copy()
         self.bad_masks[:(self.M-1)*self.episode_length + 1] = self.bad_masks[-(self.M-1)*self.episode_length - 1:].copy()
@@ -122,6 +122,9 @@ class OnPolicySRCriticBufferEP:
                 
 
                 self.value_preds[-1] = next_value
+
+                #print('self.rewards', self.rewards)
+                #print('self.value_preds', self.value_preds)
 
                 acc = 0
                 for step in reversed(range(self.rewards.shape[0])):

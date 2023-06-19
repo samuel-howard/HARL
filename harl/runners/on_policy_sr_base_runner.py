@@ -205,6 +205,10 @@ class OnPolicySRBaseRunner:
                     rnn_states_critic,
                 ) = self.collect(step)
                 # actions: (n_threads, n_agents, action_dim)
+
+                # print("actions", actions)
+
+
                 (
                     obs,
                     share_obs,
@@ -219,6 +223,9 @@ class OnPolicySRBaseRunner:
                 # dones: (n_threads, n_agents)
                 # infos: (n_threads)
                 # available_actions: (n_threads, ) of None or (n_threads, n_agents, action_number)
+
+                # print("obs", obs)
+
                 data = (
                     obs,
                     share_obs,
@@ -233,9 +240,17 @@ class OnPolicySRBaseRunner:
                     rnn_states_critic,
                 )
 
+                # Remove the values from data (ie don't use insert) - tbh this shouldn't really matter because will just overwrite later.
+                # Create new 'insert_values function that just inserts the entire thing into the buffer.
+                # No propagating backwards is required - it's worked out separately each time
+
                 self.logger.per_step(data)  # logger callback at each step
 
                 self.insert(data)  # insert data into buffer
+
+
+            # MAKE THIS FUNCTION
+            self.insert_values()
 
             # compute return and update network
             self.compute()
@@ -289,12 +304,17 @@ class OnPolicySRBaseRunner:
         action_collector = []
         action_log_prob_collector = []
         rnn_state_collector = []
+
+
+        #print('observation check', self.actor_buffer[0].obs)
+
         for agent_id in range(self.num_agents):
+            #print('observation check', self.actor_buffer[agent_id].obs[-self.episode_length - 1 + step])
             action, action_log_prob, rnn_state = self.actor[agent_id].get_actions(
-                self.actor_buffer[agent_id].obs[step],
-                self.actor_buffer[agent_id].rnn_states[step],
-                self.actor_buffer[agent_id].masks[step],
-                self.actor_buffer[agent_id].available_actions[step]
+                self.actor_buffer[agent_id].obs[-self.episode_length - 1 + step],
+                self.actor_buffer[agent_id].rnn_states[-self.episode_length - 1 + step],
+                self.actor_buffer[agent_id].masks[-self.episode_length - 1 + step],
+                self.actor_buffer[agent_id].available_actions[-self.episode_length + step]
                 if self.actor_buffer[agent_id].available_actions is not None
                 else None,
             )
@@ -309,24 +329,27 @@ class OnPolicySRBaseRunner:
         # collect values, rnn_states_critic from 1 critic
         if self.state_type == "EP":
             value, rnn_state_critic = self.critic.get_values(
-                self.critic_buffer.share_obs[step],
-                self.critic_buffer.rnn_states_critic[step],
-                self.critic_buffer.masks[step],
+                self.critic_buffer.share_obs[-self.episode_length - 1 + step],
+                self.critic_buffer.rnn_states_critic[-self.episode_length - 1 + step],
+                self.critic_buffer.masks[-self.episode_length - 1 + step],
             )
             # (n_threads, dim)
             values = _t2n(value)
+            # print('values', values)
             rnn_states_critic = _t2n(rnn_state_critic)
         elif self.state_type == "FP":
             value, rnn_state_critic = self.critic.get_values(
-                np.concatenate(self.critic_buffer.share_obs[step]),
-                np.concatenate(self.critic_buffer.rnn_states_critic[step]),
-                np.concatenate(self.critic_buffer.masks[step]),
+                np.concatenate(self.critic_buffer.share_obs[-self.episode_length - 1 + step]),
+                np.concatenate(self.critic_buffer.rnn_states_critic[-self.episode_length - 1 + step]),
+                np.concatenate(self.critic_buffer.masks[-self.episode_length - 1 + step]),
             )  # concatenate (n_threads, n_agents, dim) into (n_threads * n_agents, dim)
             # split (n_threads * n_agents, dim) into (n_threads, n_agents, dim)
             values = np.array(np.split(_t2n(value), self.algo_args['train']['n_rollout_threads']))
             rnn_states_critic = np.array(
                 np.split(_t2n(rnn_state_critic), self.algo_args['train']['n_rollout_threads'])
             )
+
+        # Note - these values aren't used for Sample Reuse algorithms.
 
         return values, actions, action_log_probs, rnn_states, rnn_states_critic
     
@@ -500,7 +523,7 @@ class OnPolicySRBaseRunner:
             
         log_rhos = np.array(agent_log_rhos).sum(axis=0)
         self.critic_buffer.compute_returns(next_value, log_rhos, self.value_normalizer)               # Pass log_probs here
-        # print("Computed returns", self.critic_buffer.returns)
+        #print("Computed returns", self.critic_buffer.returns)
 
     def train(self):
         """Train the model."""
@@ -772,3 +795,32 @@ class OnPolicySRBaseRunner:
             self.writter.export_scalars_to_json(str(self.log_dir + "/summary.json"))
             self.writter.close()
             self.logger.close()
+
+
+    def insert_values(self):
+        """Calculate values for all states currently in the buffer, insert into critic buffer"""
+        # collect values, rnn_states_critic from 1 critic
+        if self.state_type == "EP":
+            values, rnn_state_critic = self.critic.get_values(
+                self.critic_buffer.share_obs,
+                self.critic_buffer.rnn_states_critic,
+                self.critic_buffer.masks,
+            )
+            # (n_threads, dim)
+            values = _t2n(values)
+            rnn_states_critic = _t2n(rnn_state_critic)
+        elif self.state_type == "FP":
+            values, rnn_state_critic = self.critic.get_values(
+                np.concatenate(self.critic_buffer.share_obs),
+                np.concatenate(self.critic_buffer.rnn_states_critic),
+                np.concatenate(self.critic_buffer.masks),
+            )  # concatenate (n_threads, n_agents, dim) into (n_threads * n_agents, dim)
+            # split (n_threads * n_agents, dim) into (n_threads, n_agents, dim)
+            values = np.array(np.split(_t2n(values), self.algo_args['train']['n_rollout_threads']))
+            rnn_states_critic = np.array(
+                np.split(_t2n(rnn_state_critic), self.algo_args['train']['n_rollout_threads'])
+            )
+
+        # Add values to critic buffer
+        self.critic_buffer.value_preds = values
+

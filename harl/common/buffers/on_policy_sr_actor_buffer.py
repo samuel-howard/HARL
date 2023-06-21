@@ -156,7 +156,7 @@ class OnPolicySRActorBuffer:
         if self.factor is not None:
             factor = self.factor.reshape(-1, self.factor.shape[-1])
         advantages = advantages.reshape(-1, 1)
-        current_log_probs = current_log_probs.reshape(-1, 1)
+        current_log_probs = current_log_probs.reshape(-1, current_log_probs.shape[-1])
         
         for indices in sampler:
             # obs shape: 

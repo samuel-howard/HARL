@@ -24,7 +24,7 @@ class HAPPO_SR(OnPolicyBase):
         self.entropy_coef = args["entropy_coef"]
         self.use_max_grad_norm = args["use_max_grad_norm"]
         self.max_grad_norm = args["max_grad_norm"]
-
+    
     def update_old(self, sample):
         """Update actor network.
         Args:
@@ -125,17 +125,6 @@ class HAPPO_SR(OnPolicyBase):
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
         factor_batch = check(factor_batch).to(**self.tpdv)
 
-        # with torch.no_grad():
-        #     # Obtain the pi_k log probs for the actions taken by the actor before the update
-        #     current_action_log_probs, _, _ = self.evaluate_actions(
-        #         obs_batch,
-        #         rnn_states_batch,
-        #         actions_batch,
-        #         masks_batch,
-        #         available_actions_batch,
-        #         active_masks_batch,
-        #     )
-
         # Reshape to do evaluations for all steps in a single forward pass - THESE ARE THE ONES WITH THE GRADIENTS PROPAGATED
         action_log_probs, dist_entropy, _ = self.evaluate_actions(
             obs_batch,
@@ -146,9 +135,6 @@ class HAPPO_SR(OnPolicyBase):
             active_masks_batch,
         )
 
-        # print('current_action_log_probs', current_action_log_probs_batch)
-        # print('old_action_log_probs_batch', old_action_log_probs_batch)
-
         # actor update
         k_i_imp_weights = getattr(torch, self.action_aggregation)(
             torch.exp(current_action_log_probs_batch - old_action_log_probs_batch),
@@ -156,7 +142,8 @@ class HAPPO_SR(OnPolicyBase):
             keepdim=True,
         )
 
-        opt_log_imp_weights = getattr(torch, self.action_aggregation)(
+        # Note - uses sum rather than self.action_aggregation which is product.
+        opt_log_imp_weights = torch.sum(
             action_log_probs - old_action_log_probs_batch,
             dim=-1,
             keepdim=True,
@@ -165,9 +152,6 @@ class HAPPO_SR(OnPolicyBase):
         surr1 = k_i_imp_weights * opt_log_imp_weights * adv_targ
         init_clipped_values = k_i_imp_weights * torch.log(k_i_imp_weights)
         surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, init_clipped_values - self.clip_param, init_clipped_values + self.clip_param) * adv_targ
-        # surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, init_clipped_values + np.log(0.8), init_clipped_values + np.log(1.2)) * adv_targ
-        # surr2 = torch.clamp(k_i_imp_weights * opt_log_imp_weights, np.log(0.8), np.log(1.2)) * adv_targ
-
 
         if self.use_policy_active_masks:
             policy_action_loss = (

@@ -206,9 +206,6 @@ class OnPolicySRBaseRunner:
                 ) = self.collect(step)
                 # actions: (n_threads, n_agents, action_dim)
 
-                # print("actions", actions)
-
-
                 (
                     obs,
                     share_obs,
@@ -223,8 +220,6 @@ class OnPolicySRBaseRunner:
                 # dones: (n_threads, n_agents)
                 # infos: (n_threads)
                 # available_actions: (n_threads, ) of None or (n_threads, n_agents, action_number)
-
-                # print("obs", obs)
 
                 data = (
                     obs,
@@ -284,7 +279,7 @@ class OnPolicySRBaseRunner:
         for agent_id in range(self.num_agents):
             self.actor_buffer[agent_id].obs[-self.episode_length - 1] = obs[:, agent_id].copy()
             if self.actor_buffer[agent_id].available_actions is not None:
-                self.actor_buffer[agent_id].available_actions[0] = available_actions[
+                self.actor_buffer[agent_id].available_actions[-self.episode_length] = available_actions[
                     :, agent_id
                 ].copy()
         if self.state_type == "EP":
@@ -305,11 +300,7 @@ class OnPolicySRBaseRunner:
         action_log_prob_collector = []
         rnn_state_collector = []
 
-
-        #print('observation check', self.actor_buffer[0].obs)
-
         for agent_id in range(self.num_agents):
-            #print('observation check', self.actor_buffer[agent_id].obs[-self.episode_length - 1 + step])
             action, action_log_prob, rnn_state = self.actor[agent_id].get_actions(
                 self.actor_buffer[agent_id].obs[-self.episode_length - 1 + step],
                 self.actor_buffer[agent_id].rnn_states[-self.episode_length - 1 + step],
@@ -335,7 +326,6 @@ class OnPolicySRBaseRunner:
             )
             # (n_threads, dim)
             values = _t2n(value)
-            # print('values', values)
             rnn_states_critic = _t2n(rnn_state_critic)
         elif self.state_type == "FP":
             value, rnn_state_critic = self.critic.get_values(
@@ -350,7 +340,6 @@ class OnPolicySRBaseRunner:
             )
 
         # Note - these values aren't used for Sample Reuse algorithms.
-
         return values, actions, action_log_probs, rnn_states, rnn_states_critic
     
     def insert(self, data):
@@ -517,13 +506,13 @@ class OnPolicySRBaseRunner:
                 .reshape(-1, *self.actor_buffer[agent_id].active_masks.shape[2:]),
             )
             agent_current_log_probs = _t2n(agent_current_log_probs)
-            agent_current_log_probs = agent_current_log_probs.reshape(agent_old_log_probs.shape)            # Possible source of bug!
+            agent_current_log_probs = agent_current_log_probs.reshape(agent_old_log_probs.shape)
             # Now they have shapes (8000,1) and (400,20,1) respectively (current are all concatenated together, which we don't want
             agent_log_rhos.append(agent_current_log_probs - agent_old_log_probs)
             
-        log_rhos = np.array(agent_log_rhos).sum(axis=0)
+        log_rhos = np.array(agent_log_rhos).sum(axis=(0,-1))
+        log_rhos = log_rhos.reshape(log_rhos.shape + (1,))
         self.critic_buffer.compute_returns(next_value, log_rhos, self.value_normalizer)               # Pass log_probs here
-        #print("Computed returns", self.critic_buffer.returns)
 
     def train(self):
         """Train the model."""

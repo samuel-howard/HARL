@@ -29,14 +29,6 @@ class OnPolicyHARunner(OnPolicyBaseRunner):
         else:
             advantages = self.critic_buffer.returns[:-1] - self.critic_buffer.value_preds[:-1]
 
-        # print('rewards', self.critic_buffer.rewards)
-        # print('returns', self.critic_buffer.returns)
-        # print('value_preds', self.value_normalizer.denormalize(self.critic_buffer.value_preds))
-        # print('value_preds', self.value_normalizer.denormalize(
-        #         self.critic_buffer.value_preds[:-1]
-        #     ) )
-        # print('mask', self.critic_buffer.masks)
-
         # normalize advantages for FP
         if self.state_type == "FP":
             active_masks_collector = [
